@@ -222,17 +222,17 @@ jobs:
           
           # Create minimal AndroidManifest.xml file (not directory)
           cat > $AAR_DIR/AndroidManifest.xml << 'EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.microsoft.onnxruntime.extensions">
-    
-    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
-    
-    <application>
-        <!-- Optional application configuration -->
-    </application>
-</manifest>
-EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.microsoft.onnxruntime.extensions">
+              
+              <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
+              
+              <application>
+                  <!-- Optional application configuration -->
+              </application>
+          </manifest>
+          EOF
           
           # Create empty res directory (required for AAR)
           mkdir -p $AAR_DIR/res/values
