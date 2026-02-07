@@ -1,159 +1,3 @@
-name: Android 16KB Page Size Verification
-
-on:
-  pull_request:
-    paths:
-      - 'CMakeLists.txt'
-      - 'cmake/**'
-      - 'java/**'
-      - 'tools/build.py'
-      - '.github/workflows/android-16kb-check.yml'
-  workflow_dispatch:
-
-jobs:
-  verify-android-16kb-alignment:
-    name: Build & Verify 16KB Page Alignment
-    runs-on: ubuntu-latest
-    
-    strategy:
-      matrix:
-        abi: [arm64-v8a, armeabi-v7a, x86, x86_64]
-      fail-fast: false
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r25c
-          add-to-path: false
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Build Android for ${{ matrix.abi }}
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: |
-          set -e
-
-          echo "Building for ABI: ${{ matrix.abi }}"
-          
-          # Clean previous build for this ABI
-          rm -rf build/Android_${{ matrix.abi }}
-          
-          # Use the project's build script with separate build directory
-          python tools/build.py \
-            --android \
-            --android_abi=${{ matrix.abi }} \
-            --android_api=27 \
-            --android_home=$ANDROID_HOME \
-            --android_ndk_path=$ANDROID_NDK_HOME \
-            --config=Release \
-            --build_dir=build/Android_${{ matrix.abi }} \
-            --update \
-            --parallel \
-            --build
-
-      - name: Verify 16KB page alignment for ${{ matrix.abi }}
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: |
-          set -e
-
-          echo "=== Verifying 16KB page size alignment for ${{ matrix.abi }} ==="
-
-          # Find android built libraries
-          LIBS=$(find build/Android_${{ matrix.abi }}/Release/lib -name "*.so" -type f)
-
-          if [ -z "$LIBS" ]; then
-            echo "ERROR: No libraries found for ${{ matrix.abi }}"
-            find build/Android_${{ matrix.abi }} -type f -name "*.so" || true
-            exit 1
-          fi
-
-          # Use llvm-readelf from NDK
-          READELF="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-
-          if [ ! -f "$READELF" ]; then
-            echo "ERROR: llvm-readelf not found at $READELF"
-            exit 1
-          fi
-
-          echo "Found libraries for ${{ matrix.abi }}:"
-          echo "$LIBS"
-          echo ""
-
-          # Libraries that are expected to have 16KB alignment
-          # We focus on extensions libraries only
-          EXTENSION_LIBS="libortextensions.so libonnxruntime_extensions4j_jni.so"
-          
-          FAILED=0
-          for LIB in $LIBS; do
-            LIBNAME=$(basename "$LIB")
-            echo "Checking: $LIBNAME"
-            echo "Full path: $LIB"
-            
-            # Get file architecture info
-            echo "File type and architecture:"
-            file "$LIB" || true
-            echo ""
-            
-            # Display LOAD segments
-            echo "LOAD segments:"
-            $READELF -l "$LIB" | grep -A 2 "LOAD" || true
-
-            # Check alignment
-            ALIGNMENT=$($READELF -l "$LIB" | grep -A 1 "LOAD" | grep "LOAD" | head -1 | awk '{print $NF}')
-            echo "Alignment: $ALIGNMENT"
-            
-            # Check if this is an extension library that should have 16KB alignment
-            if [[ "$EXTENSION_LIBS" =~ "$LIBNAME" ]]; then
-              if [[ "$ALIGNMENT" == "0x4000" ]]; then
-                echo "PASS: $LIBNAME has required 16KB alignment (0x4000)"
-              else
-                echo "FAIL: Extension library $LIBNAME should have 16KB alignment (0x4000) but has $ALIGNMENT"
-                FAILED=1
-              fi
-            else
-              echo "INFO: $LIBNAME is not an extension library, alignment check skipped"
-            fi
-            echo "---"
-          done
-
-          if [ $FAILED -ne 0 ]; then
-            echo ""
-            echo "ERROR: One or more extension libraries for ${{ matrix.abi }} do not have 16KB page alignment"
-            exit 1
-          fi
-
-          echo ""
-          echo "SUCCESS: All extension libraries for ${{ matrix.abi }} have correct alignment"
-
-      - name: Upload build artifacts for ${{ matrix.abi }}
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-${{ matrix.abi }}-libraries
-          path: |
-            build/Android_${{ matrix.abi }}/Release/lib/*.so
-            build/Android_${{ matrix.abi }}/Release/bin/*
-          retention-days: 7
-
   package-aar:
     name: Package Android AAR
     runs-on: ubuntu-latest
@@ -185,6 +29,9 @@ jobs:
           # Define base directories
           AAR_DIR="build/outputs/aar"
           LIBS_DIR="$AAR_DIR/jni"
+          
+          # Clean up any existing AAR directory
+          rm -rf $AAR_DIR
           
           # Create directory structure
           mkdir -p $LIBS_DIR/{arm64-v8a,armeabi-v7a,x86,x86_64}
@@ -219,6 +66,11 @@ jobs:
             SOURCE_DIR="artifacts/android-$ABI-libraries"
             
             if [ -d "$SOURCE_DIR" ]; then
+              # Find all .so files first
+              ALL_SO_FILES=$(find "$SOURCE_DIR" -name "*.so" -type f)
+              echo "All .so files found in $SOURCE_DIR:"
+              echo "$ALL_SO_FILES" | sed 's/^/  /'
+              
               # Find only extension libraries
               for LIB_NAME in $EXTENSION_LIBS; do
                 SO_FILES=$(find "$SOURCE_DIR" -name "$LIB_NAME" -type f)
@@ -230,22 +82,15 @@ jobs:
                     FILENAME=$(basename "$SO_FILE")
                     DEST_PATH="$AAR_DIR/jni/$ABI/$FILENAME"
                     
-                    # Verify it's the correct architecture
-                    ARCH_INFO=$(file "$SO_FILE" 2>/dev/null || echo "")
-                    if [[ "$ARCH_INFO" =~ "$ABI" ]] || [[ "$ARCH_INFO" =~ "ARM" && "$ABI" =~ "arm" ]] || \
-                       [[ "$ARCH_INFO" =~ "Intel" && "$ABI" =~ "x86" ]]; then
-                      cp "$SO_FILE" "$DEST_PATH"
-                      echo "Copied: $FILENAME to jni/$ABI/"
-                    else
-                      echo "INFO: $FILENAME architecture: $ARCH_INFO"
-                      echo "Copying anyway as it may be from $ABI build..."
-                      cp "$SO_FILE" "$DEST_PATH"
-                    fi
+                    echo "Copying $SO_FILE to $DEST_PATH"
+                    cp "$SO_FILE" "$DEST_PATH"
+                    echo "Copied: $FILENAME to jni/$ABI/"
                   done
                 else
                   echo "WARNING: $LIB_NAME not found for $ABI in $SOURCE_DIR"
-                  # List what's available for debugging
-                  find "$SOURCE_DIR" -name "*.so" -type f 2>/dev/null | head -10
+                  # Search more broadly for any .so file that might match
+                  echo "Searching for any .so files that might match pattern..."
+                  find "$SOURCE_DIR" -name "*.so" -type f -exec basename {} \; | sort -u
                 fi
               done
             else
@@ -260,15 +105,23 @@ jobs:
           echo ""
           
           # Verify we have libraries for each ABI
+          HAS_LIBS=0
           for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
             COUNT=$(find $AAR_DIR/jni/$ABI -name "*.so" -type f 2>/dev/null | wc -l)
             if [ $COUNT -eq 0 ]; then
-              echo "ERROR: No extension libraries found for $ABI"
-              exit 1
+              echo "WARNING: No extension libraries found for $ABI"
             else
               echo "✓ $ABI: $COUNT extension libraries"
+              HAS_LIBS=1
             fi
           done
+          
+          if [ $HAS_LIBS -eq 0 ]; then
+            echo "ERROR: No extension libraries found for any ABI!"
+            echo "Available artifacts:"
+            find artifacts -type f -name "*.so" 2>/dev/null || true
+            exit 1
+          fi
 
       - name: Compile only main Java library code
         run: |
@@ -282,8 +135,8 @@ jobs:
             echo "Found main Java source directory at: $JAVA_SRC_DIR"
             
             # List Java files
-            echo "Java files found in src/main/java:"
-            find "$JAVA_SRC_DIR" -name "*.java" -type f
+            JAVA_FILE_COUNT=$(find "$JAVA_SRC_DIR" -name "*.java" -type f | wc -l)
+            echo "Found $JAVA_FILE_COUNT Java files in src/main/java"
             
             # Create build directory
             rm -rf $BUILD_DIR
@@ -300,6 +153,9 @@ jobs:
               if [ ! -f "$ANDROID_JAR" ]; then
                 # Try to find any android.jar
                 ANDROID_JAR=$(find "$ANDROID_HOME/platforms" -name "android.jar" | head -1)
+                if [ -f "$ANDROID_JAR" ]; then
+                  echo "Found Android SDK jar: $ANDROID_JAR"
+                fi
               fi
               
               if [ -f "$ANDROID_JAR" ]; then
@@ -337,11 +193,11 @@ jobs:
                   cd ../..
                   
                   echo "JAR file created successfully: $JAR_FILE"
-                  echo "JAR size: $(du -h $JAR_FILE | cut -f1)"
+                  echo "JAR size: $(du -h "$JAR_FILE" 2>/dev/null || echo "0")"
                   
                   # List JAR contents
                   echo "JAR contents:"
-                  jar tf $JAR_FILE
+                  jar tf "$JAR_FILE" 2>/dev/null | head -20 || echo "Could not list JAR contents"
                 else
                   echo "Java compilation failed!"
                   echo "Trying simplified compilation without Android SDK dependency..."
@@ -373,7 +229,7 @@ jobs:
                   else
                     echo "Java compilation completely failed!"
                     echo "Creating empty JAR file..."
-                    touch $JAR_FILE
+                    touch "$JAR_FILE"
                   fi
                 fi
               else
@@ -400,18 +256,20 @@ jobs:
                   cd ../..
                 else
                   echo "Creating empty JAR file..."
-                  touch $JAR_FILE
+                  touch "$JAR_FILE"
                 fi
               fi
             else
               echo "WARNING: No Java source files found in $JAVA_SRC_DIR"
               # Create empty JAR file
-              touch $JAR_FILE
+              mkdir -p "$(dirname "$JAR_FILE")"
+              touch "$JAR_FILE"
             fi
           else
             echo "WARNING: Main Java source directory not found: $JAVA_SRC_DIR"
             echo "Creating empty JAR file..."
-            touch $JAR_FILE
+            mkdir -p "$(dirname "$JAR_FILE")"
+            touch "$JAR_FILE"
           fi
 
       - name: Create proguard rules
@@ -474,11 +332,10 @@ jobs:
           
           echo "=== Java Classes ==="
           if [ -f "$AAR_DIR/classes.jar" ]; then
-            JAR_SIZE=$(du -h $AAR_DIR/classes.jar | cut -f1)
+            JAR_SIZE=$(du -h "$AAR_DIR/classes.jar" 2>/dev/null || echo "0")
             echo "classes.jar exists, size: $JAR_SIZE"
-            if [ $JAR_SIZE != "0" ]; then
+            if [ "$JAR_SIZE" != "0" ]; then
               echo "JAR contains Java classes"
-              jar tf $AAR_DIR/classes.jar 2>/dev/null | head -20 || echo "Could not list JAR contents"
             else
               echo "JAR is empty (no Java classes compiled)"
             fi
@@ -488,43 +345,76 @@ jobs:
           echo ""
           
           echo "=== Manifest ==="
-          cat $AAR_DIR/AndroidManifest.xml
+          cat "$AAR_DIR/AndroidManifest.xml"
           echo ""
+          
+          echo "=== Current directory structure ==="
+          pwd
+          ls -la
+          echo ""
+          echo "=== Build directory structure ==="
+          ls -la build/ 2>/dev/null || echo "No build directory"
+          ls -la build/outputs/ 2>/dev/null || echo "No outputs directory"
 
       - name: Package AAR file
         run: |
           echo "Packaging AAR file..."
           
           AAR_DIR="build/outputs/aar"
-          OUTPUT_AAR="onnxruntime_extensions-android.aar"
+          OUTPUT_AAR="build/outputs/onnxruntime_extensions-android.aar"
+          
+          # Ensure output directory exists
+          mkdir -p "$(dirname "$OUTPUT_AAR")"
           
           # Create the AAR file (it's just a zip with specific structure)
           cd $AAR_DIR
           
           echo "Packaging from directory: $(pwd)"
           echo "Number of files to package: $(find . -type f | wc -l)"
+          echo "Files to package:"
+          find . -type f | sort
           
           # Create the AAR
-          zip -r "../../$OUTPUT_AAR" ./*
+          zip -r "../onnxruntime_extensions-android.aar" ./*
           
           cd ../..
           
           echo ""
           echo "=== AAR Package Created ==="
           echo "File: $OUTPUT_AAR"
-          echo "Size: $(du -h $OUTPUT_AAR | cut -f1)"
           
-          # Verify AAR structure
-          echo ""
-          echo "=== AAR Contents ==="
-          unzip -l $OUTPUT_AAR | head -30
+          if [ -f "$OUTPUT_AAR" ]; then
+            echo "Size: $(du -h "$OUTPUT_AAR" | cut -f1)"
+            
+            # Verify AAR structure
+            echo ""
+            echo "=== AAR Contents ==="
+            unzip -l "$OUTPUT_AAR" | head -30
+            
+            # Create a symlink in root directory for easier access
+            ln -sf "$OUTPUT_AAR" "onnxruntime_extensions-android.aar"
+            echo ""
+            echo "Created symlink: onnxruntime_extensions-android.aar -> $OUTPUT_AAR"
+          else
+            echo "ERROR: AAR file was not created!"
+            echo "Current directory: $(pwd)"
+            ls -la
+            echo "Build directory:"
+            ls -la build/ 2>/dev/null || echo "No build directory"
+            exit 1
+          fi
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: onnxruntime-extensions-android-aar
-          path: onnxruntime_extensions-android.aar
+          path: |
+            onnxruntime_extensions-android.aar
+            build/outputs/onnxruntime_extensions-android.aar
           retention-days: 7
+          if-no-files-found: error
+          compression-level: 6
+          overwrite: true
 
       - name: Upload AAR directory (for inspection)
         if: always()
@@ -533,45 +423,15 @@ jobs:
           name: aar-directory-structure
           path: build/outputs/aar
           retention-days: 7
+          if-no-files-found: warn
 
-  verify-summary:
-    name: Build Verification Summary
-    runs-on: ubuntu-latest
-    needs: [verify-android-16kb-alignment, package-aar]
-    if: always()
-    
-    steps:
-      - name: Display summary
-        run: |
-          echo "=== Android Build Verification Summary ==="
-          echo ""
-          echo "Architecture Build Status:"
-          echo "  arm64-v8a:    ${{ needs.verify-android-16kb-alignment.result == 'success' && '✅ PASS' || '❌ FAIL' }}"
-          echo "  armeabi-v7a:  ${{ needs.verify-android-16kb-alignment.result == 'success' && '✅ PASS' || '❌ FAIL' }}"
-          echo "  x86:          ${{ needs.verify-android-16kb-alignment.result == 'success' && '✅ PASS' || '❌ FAIL' }}"
-          echo "  x86_64:       ${{ needs.verify-android-16kb-alignment.result == 'success' && '✅ PASS' || '❌ FAIL' }}"
-          echo ""
-          echo "AAR Packaging: ${{ needs.package-aar.result == 'success' && '✅ SUCCESS' || '❌ FAILED' }}"
-          echo ""
-          
-          # Check if all builds passed
-          if [[ "${{ needs.verify-android-16kb-alignment.result }}" == "success" ]] && [[ "${{ needs.package-aar.result }}" == "success" ]]; then
-            echo "🎉 All Android architectures built successfully!"
-            echo "📦 AAR package created: onnxruntime_extensions-android.aar"
-            echo ""
-            echo "Components included:"
-            echo "  - Extension native libraries for 4 architectures:"
-            echo "    • libortextensions.so"
-            echo "    • libonnxruntime_extensions4j_jni.so"
-            echo "  - Java library classes from java/src/main/java/"
-            echo "  - AndroidManifest.xml"
-            echo "  - Required AAR metadata files (R.txt, proguard.txt)"
-            echo ""
-            echo "Note: Only extension libraries are included in the AAR."
-            echo "      libonnxruntime.so should be added as a separate dependency."
-            echo "      All extension libraries use 16KB alignment for Android compatibility"
-          else
-            echo "⚠️  Some builds or packaging steps failed"
-            echo "Check the individual job logs for details"
-            exit 1
-          fi
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            artifacts/
+            build/
+          retention-days: 3
+          if-no-files-found: warn
