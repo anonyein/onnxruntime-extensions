@@ -528,11 +528,15 @@ jobs:
           
           echo "Packaging from directory: $AAR_DIR"
           echo "Number of files to package: $(find "$AAR_DIR" -type f | wc -l)"
-          echo "Files to package:"
-          find "$AAR_DIR" -type f | sort
           
-          # Create the AAR file without changing directory
+          # Save current directory
+          ORIG_DIR=$(pwd)
+          
+          # Create the AAR file
           cd "$AAR_DIR" && zip -r "../onnxruntime_extensions-android.aar" ./*
+          
+          # Return to original directory
+          cd "$ORIG_DIR"
           
           echo ""
           echo "=== AAR Package Created ==="
@@ -563,16 +567,37 @@ jobs:
             echo "=== Generated AAR file ==="
             ls -la "$OUTPUT_AAR"
             ls -la "onnxruntime_extensions-android.aar"
+            
+            # Also show what's in build/outputs
+            echo ""
+            echo "=== Build/outputs directory ==="
+            ls -la build/outputs/ 2>/dev/null || echo "No outputs directory"
           else
             echo "ERROR: AAR file was not created!"
             echo "Checking for file in various locations..."
-            find . -name "*.aar" -type f 2>/dev/null || echo "No .aar files found"
+            
+            # Search for the AAR file from the original directory
+            find "$ORIG_DIR" -name "*.aar" -type f 2>/dev/null || echo "No .aar files found in $ORIG_DIR"
+            
+            # Check in the AAR directory parent
+            echo "Checking in $AAR_DIR/.."
+            ls -la "$AAR_DIR/.." 2>/dev/null || echo "Cannot list $AAR_DIR/.."
+            
+            echo "Current directory: $(pwd)"
             echo "Current directory contents:"
             ls -la
-            echo "Build directory:"
-            ls -la build/ 2>/dev/null || echo "No build directory"
-            echo "Build/outputs directory:"
-            ls -la build/outputs/ 2>/dev/null || echo "No outputs directory"
+            
+            # Check if we're in the right place
+            echo "Checking if we're in the AAR directory..."
+            if [ "$(pwd)" = "$AAR_DIR" ]; then
+              echo "We're in the AAR directory! Need to go back to original directory."
+              cd "$ORIG_DIR"
+              echo "Now in: $(pwd)"
+              echo "Checking for AAR from here..."
+              if [ -f "$OUTPUT_AAR" ]; then
+                echo "Found AAR file!"
+              fi
+            fi
             exit 1
           fi
 
