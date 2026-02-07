@@ -220,16 +220,14 @@ jobs:
           mkdir -p $LIBS_DIR/{arm64-v8a,armeabi-v7a,x86,x86_64}
           mkdir -p $AAR_DIR/res
           
-          # Create minimal AndroidManifest.xml file
-          cat > $AAR_DIR/AndroidManifest.xml << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="ai.onnxruntime.extensions">
-              
-              <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
-              
-          </manifest>
-          EOF
+          # Create minimal AndroidManifest.xml file using multiple echo commands
+          echo '<?xml version="1.0" encoding="utf-8"?>' > $AAR_DIR/AndroidManifest.xml
+          echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android"' >> $AAR_DIR/AndroidManifest.xml
+          echo '    package="ai.onnxruntime.extensions">' >> $AAR_DIR/AndroidManifest.xml
+          echo '    ' >> $AAR_DIR/AndroidManifest.xml
+          echo '    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />' >> $AAR_DIR/AndroidManifest.xml
+          echo '    ' >> $AAR_DIR/AndroidManifest.xml
+          echo '</manifest>' >> $AAR_DIR/AndroidManifest.xml
           
           # Create empty res directory (required for AAR)
           mkdir -p $AAR_DIR/res/values
@@ -336,15 +334,13 @@ jobs:
                   # Create JAR file
                   echo "Creating JAR file: $JAR_FILE"
                   
-                  # Create manifest
+                  # Create manifest using echo instead of heredoc
                   mkdir -p $BUILD_DIR/META-INF
-                  cat > $BUILD_DIR/META-INF/MANIFEST.MF << 'MANIFEST_EOF'
-                  Manifest-Version: 1.0
-                  Created-By: GitHub Actions
-                  Bundle-Name: ONNX Runtime Extensions
-                  Bundle-SymbolicName: ai.onnxruntime.extensions
-                  Bundle-Version: 1.0.0
-                  MANIFEST_EOF
+                  echo "Manifest-Version: 1.0" > $BUILD_DIR/META-INF/MANIFEST.MF
+                  echo "Created-By: GitHub Actions" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                  echo "Bundle-Name: ONNX Runtime Extensions" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                  echo "Bundle-SymbolicName: ai.onnxruntime.extensions" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                  echo "Bundle-Version: 1.0.0" >> $BUILD_DIR/META-INF/MANIFEST.MF
                   
                   # Package JAR
                   cd $BUILD_DIR
@@ -371,6 +367,14 @@ jobs:
                   if [ $? -eq 0 ]; then
                     echo "Java compilation successful without Android SDK!"
                     
+                    # Create manifest
+                    mkdir -p $BUILD_DIR/META-INF
+                    echo "Manifest-Version: 1.0" > $BUILD_DIR/META-INF/MANIFEST.MF
+                    echo "Created-By: GitHub Actions" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                    echo "Bundle-Name: ONNX Runtime Extensions" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                    echo "Bundle-SymbolicName: ai.onnxruntime.extensions" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                    echo "Bundle-Version: 1.0.0" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                    
                     # Create JAR file
                     cd $BUILD_DIR
                     jar cf "../../$JAR_FILE" .
@@ -393,6 +397,15 @@ jobs:
                 
                 if [ $? -eq 0 ]; then
                   echo "Java compilation successful without Android SDK!"
+                  
+                  # Create manifest
+                  mkdir -p $BUILD_DIR/META-INF
+                  echo "Manifest-Version: 1.0" > $BUILD_DIR/META-INF/MANIFEST.MF
+                  echo "Created-By: GitHub Actions" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                  echo "Bundle-Name: ONNX Runtime Extensions" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                  echo "Bundle-SymbolicName: ai.onnxruntime.extensions" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                  echo "Bundle-Version: 1.0.0" >> $BUILD_DIR/META-INF/MANIFEST.MF
+                  
                   cd $BUILD_DIR
                   jar cf "../../$JAR_FILE" .
                   cd ../..
@@ -419,20 +432,18 @@ jobs:
           AAR_DIR="build/outputs/aar"
           PROGUARD_FILE="$AAR_DIR/proguard.txt"
           
-          cat > $PROGUARD_FILE << 'EOF'
-          # ProGuard rules for ONNX Runtime Extensions
-          -keep class ai.onnxruntime.extensions.** { *; }
-          
-          # Keep native methods
-          -keepclasseswithmembernames class * {
-              native <methods>;
-          }
-          
-          # Keep public classes and methods
-          -keep public class * {
-              public <methods>;
-          }
-          EOF
+          echo "# ProGuard rules for ONNX Runtime Extensions" > $PROGUARD_FILE
+          echo "-keep class ai.onnxruntime.extensions.** { *; }" >> $PROGUARD_FILE
+          echo "" >> $PROGUARD_FILE
+          echo "# Keep native methods" >> $PROGUARD_FILE
+          echo "-keepclasseswithmembernames class * {" >> $PROGUARD_FILE
+          echo "    native <methods>;" >> $PROGUARD_FILE
+          echo "}" >> $PROGUARD_FILE
+          echo "" >> $PROGUARD_FILE
+          echo "# Keep public classes and methods" >> $PROGUARD_FILE
+          echo "-keep public class * {" >> $PROGUARD_FILE
+          echo "    public <methods>;" >> $PROGUARD_FILE
+          echo "}" >> $PROGUARD_FILE
           
           echo "Proguard rules created: $PROGUARD_FILE"
 
@@ -444,9 +455,7 @@ jobs:
           R_TXT="$AAR_DIR/R.txt"
           
           # Create minimal R.txt file (AAR requires this file)
-          cat > $R_TXT << 'EOF'
-          int style Theme_AppCompat 0x7f010000
-          EOF
+          echo "int style Theme_AppCompat 0x7f010000" > $R_TXT
           
           echo "R.txt created: $R_TXT"
 
