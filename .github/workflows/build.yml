@@ -338,13 +338,13 @@ jobs:
                   
                   # Create manifest
                   mkdir -p $BUILD_DIR/META-INF
-                  cat > $BUILD_DIR/META-INF/MANIFEST.MF << 'EOF'
+                  cat > $BUILD_DIR/META-INF/MANIFEST.MF << 'MANIFEST_EOF'
                   Manifest-Version: 1.0
                   Created-By: GitHub Actions
                   Bundle-Name: ONNX Runtime Extensions
                   Bundle-SymbolicName: ai.onnxruntime.extensions
                   Bundle-Version: 1.0.0
-                  EOF
+                  MANIFEST_EOF
                   
                   # Package JAR
                   cd $BUILD_DIR
