@@ -99,8 +99,8 @@ jobs:
           echo ""
 
           # Libraries that are expected to have 16KB alignment
-          # libonnxruntime.so may use 4KB alignment by default
-          TARGET_LIBS="libortextensions.so libonnxruntime_extensions4j_jni.so"
+          # We focus on extensions libraries only
+          EXTENSION_LIBS="libortextensions.so libonnxruntime_extensions4j_jni.so"
           
           FAILED=0
           for LIB in $LIBS; do
@@ -121,58 +121,28 @@ jobs:
             ALIGNMENT=$($READELF -l "$LIB" | grep -A 1 "LOAD" | grep "LOAD" | head -1 | awk '{print $NF}')
             echo "Alignment: $ALIGNMENT"
             
-            # For armeabi-v7a, different libraries may have different requirements
-            if [[ "${{ matrix.abi }}" == "armeabi-v7a" ]]; then
-              if [[ "$LIBNAME" == "libonnxruntime.so" ]]; then
-                echo "INFO: libonnxruntime.so may use 4KB alignment by default"
-                echo "Checking if 4KB or 16KB alignment..."
-                if [[ "$ALIGNMENT" == "0x1000" ]] || [[ "$ALIGNMENT" == "0x4000" ]]; then
-                  echo "PASS: $LIBNAME has acceptable alignment ($ALIGNMENT)"
-                else
-                  echo "WARN: $LIBNAME has unexpected alignment: $ALIGNMENT"
-                fi
-              elif [[ "$TARGET_LIBS" =~ "$LIBNAME" ]]; then
-                if [[ "$ALIGNMENT" == "0x4000" ]]; then
-                  echo "PASS: $LIBNAME has required 16KB alignment (0x4000)"
-                else
-                  echo "FAIL: $LIBNAME should have 16KB alignment (0x4000) but has $ALIGNMENT"
-                  FAILED=1
-                fi
-              else
-                echo "INFO: $LIBNAME - checking alignment"
-                if [[ "$ALIGNMENT" == "0x4000" ]]; then
-                  echo "PASS: $LIBNAME has 16KB alignment"
-                else
-                  echo "INFO: $LIBNAME has $ALIGNMENT alignment"
-                fi
-              fi
-            else
-              # For other ABIs (64-bit), check for 16KB alignment
+            # Check if this is an extension library that should have 16KB alignment
+            if [[ "$EXTENSION_LIBS" =~ "$LIBNAME" ]]; then
               if [[ "$ALIGNMENT" == "0x4000" ]]; then
                 echo "PASS: $LIBNAME has required 16KB alignment (0x4000)"
               else
-                echo "Checking if alignment is acceptable..."
-                # 64-bit architectures should use 16KB, but we can be flexible
-                if [[ "$ALIGNMENT" == "0x1000" ]]; then
-                  echo "WARN: $LIBNAME has 4KB alignment (0x1000) - may work but not optimal"
-                else
-                  echo "FAIL: $LIBNAME should have 16KB alignment (0x4000) but has $ALIGNMENT"
-                  FAILED=1
-                fi
+                echo "FAIL: Extension library $LIBNAME should have 16KB alignment (0x4000) but has $ALIGNMENT"
+                FAILED=1
               fi
+            else
+              echo "INFO: $LIBNAME is not an extension library, alignment check skipped"
             fi
             echo "---"
           done
 
           if [ $FAILED -ne 0 ]; then
             echo ""
-            echo "ERROR: One or more required libraries for ${{ matrix.abi }} do not have 16KB page alignment"
-            echo "Note: libonnxruntime.so may use 4KB alignment by default"
+            echo "ERROR: One or more extension libraries for ${{ matrix.abi }} do not have 16KB page alignment"
             exit 1
           fi
 
           echo ""
-          echo "SUCCESS: All required libraries for ${{ matrix.abi }} have correct alignment"
+          echo "SUCCESS: All extension libraries for ${{ matrix.abi }} have correct alignment"
 
       - name: Upload build artifacts for ${{ matrix.abi }}
         if: always()
@@ -233,11 +203,14 @@ jobs:
           mkdir -p $AAR_DIR/res/values
           echo '<?xml version="1.0" encoding="utf-8"?><resources></resources>' > $AAR_DIR/res/values/values.xml
 
-      - name: Copy native libraries to AAR structure
+      - name: Copy only extension libraries to AAR structure
         run: |
-          echo "Copying native libraries..."
+          echo "Copying only extension libraries to AAR structure..."
           
           AAR_DIR="build/outputs/aar"
+          
+          # Define which libraries to include (only extension libraries)
+          EXTENSION_LIBS="libortextensions.so libonnxruntime_extensions4j_jni.so"
           
           # Copy libraries from each ABI artifact
           for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
@@ -246,31 +219,35 @@ jobs:
             SOURCE_DIR="artifacts/android-$ABI-libraries"
             
             if [ -d "$SOURCE_DIR" ]; then
-              # Find all .so files
-              SO_FILES=$(find "$SOURCE_DIR" -name "*.so" -type f)
-              
-              if [ -n "$SO_FILES" ]; then
-                echo "Found $(echo "$SO_FILES" | wc -l) .so files for $ABI"
+              # Find only extension libraries
+              for LIB_NAME in $EXTENSION_LIBS; do
+                SO_FILES=$(find "$SOURCE_DIR" -name "$LIB_NAME" -type f)
                 
-                for SO_FILE in $SO_FILES; do
-                  FILENAME=$(basename "$SO_FILE")
-                  DEST_PATH="$AAR_DIR/jni/$ABI/$FILENAME"
+                if [ -n "$SO_FILES" ]; then
+                  echo "Found $(echo "$SO_FILES" | wc -l) $LIB_NAME files for $ABI"
                   
-                  # Verify it's the correct architecture
-                  ARCH_INFO=$(file "$SO_FILE" 2>/dev/null || echo "")
-                  if [[ "$ARCH_INFO" =~ "$ABI" ]] || [[ "$ARCH_INFO" =~ "ARM" && "$ABI" =~ "arm" ]] || \
-                     [[ "$ARCH_INFO" =~ "Intel" && "$ABI" =~ "x86" ]]; then
-                    cp "$SO_FILE" "$DEST_PATH"
-                    echo "Copied: $FILENAME to jni/$ABI/"
-                  else
-                    echo "INFO: $FILENAME architecture: $ARCH_INFO"
-                    echo "Copying anyway as it may be from $ABI build..."
-                    cp "$SO_FILE" "$DEST_PATH"
-                  fi
-                done
-              else
-                echo "WARNING: No .so files found for $ABI in $SOURCE_DIR"
-              fi
+                  for SO_FILE in $SO_FILES; do
+                    FILENAME=$(basename "$SO_FILE")
+                    DEST_PATH="$AAR_DIR/jni/$ABI/$FILENAME"
+                    
+                    # Verify it's the correct architecture
+                    ARCH_INFO=$(file "$SO_FILE" 2>/dev/null || echo "")
+                    if [[ "$ARCH_INFO" =~ "$ABI" ]] || [[ "$ARCH_INFO" =~ "ARM" && "$ABI" =~ "arm" ]] || \
+                       [[ "$ARCH_INFO" =~ "Intel" && "$ABI" =~ "x86" ]]; then
+                      cp "$SO_FILE" "$DEST_PATH"
+                      echo "Copied: $FILENAME to jni/$ABI/"
+                    else
+                      echo "INFO: $FILENAME architecture: $ARCH_INFO"
+                      echo "Copying anyway as it may be from $ABI build..."
+                      cp "$SO_FILE" "$DEST_PATH"
+                    fi
+                  done
+                else
+                  echo "WARNING: $LIB_NAME not found for $ABI in $SOURCE_DIR"
+                  # List what's available for debugging
+                  find "$SOURCE_DIR" -name "*.so" -type f 2>/dev/null | head -10
+                fi
+              done
             else
               echo "WARNING: Artifact directory not found for $ABI: $SOURCE_DIR"
             fi
@@ -278,8 +255,20 @@ jobs:
           
           # List all copied libraries
           echo ""
-          echo "Libraries copied to AAR structure:"
+          echo "Extension libraries copied to AAR structure:"
           find $AAR_DIR/jni -name "*.so" -type f | sort
+          echo ""
+          
+          # Verify we have libraries for each ABI
+          for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
+            COUNT=$(find $AAR_DIR/jni/$ABI -name "*.so" -type f 2>/dev/null | wc -l)
+            if [ $COUNT -eq 0 ]; then
+              echo "ERROR: No extension libraries found for $ABI"
+              exit 1
+            else
+              echo "✓ $ABI: $COUNT extension libraries"
+            fi
+          done
 
       - name: Compile only main Java library code
         run: |
@@ -474,7 +463,11 @@ jobs:
           for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
             COUNT=$(find $AAR_DIR/jni/$ABI -name "*.so" -type f 2>/dev/null | wc -l)
             TOTAL_LIBS=$((TOTAL_LIBS + COUNT))
-            echo "$ABI: $COUNT libraries"
+            echo "$ABI: $COUNT extension libraries"
+            if [ $COUNT -gt 0 ]; then
+              echo "  Libraries:"
+              find $AAR_DIR/jni/$ABI -name "*.so" -type f | sed 's/^/    /'
+            fi
           done
           echo "Total native libraries: $TOTAL_LIBS"
           echo ""
@@ -484,8 +477,8 @@ jobs:
             JAR_SIZE=$(du -h $AAR_DIR/classes.jar | cut -f1)
             echo "classes.jar exists, size: $JAR_SIZE"
             if [ $JAR_SIZE != "0" ]; then
-              echo "JAR contents:"
-              jar tf $AAR_DIR/classes.jar || echo "Could not list JAR contents"
+              echo "JAR contains Java classes"
+              jar tf $AAR_DIR/classes.jar 2>/dev/null | head -20 || echo "Could not list JAR contents"
             else
               echo "JAR is empty (no Java classes compiled)"
             fi
@@ -567,13 +560,16 @@ jobs:
             echo "📦 AAR package created: onnxruntime_extensions-android.aar"
             echo ""
             echo "Components included:"
-            echo "  - Native libraries for 4 architectures (arm64-v8a, armeabi-v7a, x86, x86_64)"
+            echo "  - Extension native libraries for 4 architectures:"
+            echo "    • libortextensions.so"
+            echo "    • libonnxruntime_extensions4j_jni.so"
             echo "  - Java library classes from java/src/main/java/"
             echo "  - AndroidManifest.xml"
             echo "  - Required AAR metadata files (R.txt, proguard.txt)"
             echo ""
-            echo "Note: libonnxruntime.so uses 4KB alignment by default"
-            echo "      Extension libraries use 16KB alignment for Android compatibility"
+            echo "Note: Only extension libraries are included in the AAR."
+            echo "      libonnxruntime.so should be added as a separate dependency."
+            echo "      All extension libraries use 16KB alignment for Android compatibility"
           else
             echo "⚠️  Some builds or packaging steps failed"
             echo "Check the individual job logs for details"
