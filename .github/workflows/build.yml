@@ -219,24 +219,24 @@ jobs:
           # Create directory structure
           mkdir -p $LIBS_DIR/{arm64-v8a,armeabi-v7a,x86,x86_64}
           mkdir -p $AAR_DIR/res
-          mkdir -p $AAR_DIR/AndroidManifest.xml
           
-          # Create minimal AndroidManifest.xml
+          # Create minimal AndroidManifest.xml file (not directory)
           cat > $AAR_DIR/AndroidManifest.xml << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="com.microsoft.onnxruntime.extensions">
-              
-              <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
-              
-              <application>
-                  <!-- Optional application configuration -->
-              </application>
-          </manifest>
-          EOF
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.microsoft.onnxruntime.extensions">
+    
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
+    
+    <application>
+        <!-- Optional application configuration -->
+    </application>
+</manifest>
+EOF
           
           # Create empty res directory (required for AAR)
-          echo '<?xml version="1.0" encoding="utf-8"?><resources></resources>' > $AAR_DIR/res/values.xml
+          mkdir -p $AAR_DIR/res/values
+          echo '<?xml version="1.0" encoding="utf-8"?><resources></resources>' > $AAR_DIR/res/values/values.xml
 
       - name: Copy native libraries to AAR structure
         run: |
@@ -296,9 +296,6 @@ jobs:
           if [ -d "$JAVA_SRC_DIR" ]; then
             echo "Found Java source directory, attempting to compile..."
             
-            # Create classes directory
-            mkdir -p $AAR_DIR/classes
-            
             # Create a simple JAR if Java sources exist
             JAR_FILE="$AAR_DIR/classes.jar"
             
@@ -329,6 +326,26 @@ jobs:
             touch $AAR_DIR/classes.jar
           fi
 
+      - name: Verify AAR structure
+        run: |
+          echo "Verifying AAR structure..."
+          
+          AAR_DIR="build/outputs/aar"
+          
+          echo "AAR directory contents:"
+          find $AAR_DIR -type f | sort
+          echo ""
+          
+          echo "JNI directory contents:"
+          find $AAR_DIR/jni -type f | sort
+          echo ""
+          
+          # Check if we have libraries for each ABI
+          for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
+            COUNT=$(find $AAR_DIR/jni/$ABI -name "*.so" -type f 2>/dev/null | wc -l)
+            echo "$ABI: $COUNT libraries"
+          done
+
       - name: Package AAR file
         run: |
           echo "Packaging AAR file..."
@@ -339,8 +356,8 @@ jobs:
           # Create the AAR file (it's just a zip with specific structure)
           cd $AAR_DIR
           
-          # List contents before packaging
-          echo "AAR directory contents:"
+          echo "Packaging from directory: $(pwd)"
+          echo "Contents to package:"
           find . -type f | sort
           
           # Create the AAR
@@ -355,7 +372,7 @@ jobs:
           # Verify AAR structure
           echo ""
           echo "AAR contents:"
-          unzip -l $OUTPUT_AAR | grep -E "(\.so$|\.jar$|AndroidManifest|\.xml$)" | sort
+          unzip -l $OUTPUT_AAR | grep -E "(\.so$|\.jar$|AndroidManifest|\.xml$)" | sort || true
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
