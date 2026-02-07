@@ -522,24 +522,24 @@ jobs:
           # Ensure output directory exists
           mkdir -p "$(dirname "$OUTPUT_AAR")"
           
-          # Create the AAR file (it's just a zip with specific structure)
-          cd $AAR_DIR
+          echo "Current directory: $(pwd)"
+          echo "AAR directory: $AAR_DIR"
+          echo "Output AAR: $OUTPUT_AAR"
           
-          echo "Packaging from directory: $(pwd)"
-          echo "Number of files to package: $(find . -type f | wc -l)"
+          echo "Packaging from directory: $AAR_DIR"
+          echo "Number of files to package: $(find "$AAR_DIR" -type f | wc -l)"
           echo "Files to package:"
-          find . -type f | sort
+          find "$AAR_DIR" -type f | sort
           
-          # Create the AAR
-          zip -r "../onnxruntime_extensions-android.aar" ./*
-          
-          cd ../..
+          # Create the AAR file without changing directory
+          cd "$AAR_DIR" && zip -r "../onnxruntime_extensions-android.aar" ./*
           
           echo ""
           echo "=== AAR Package Created ==="
-          echo "File: $OUTPUT_AAR"
           
+          # Check if AAR was created
           if [ -f "$OUTPUT_AAR" ]; then
+            echo "File: $OUTPUT_AAR"
             echo "Size: $(du -h "$OUTPUT_AAR" | cut -f1)"
             
             # Verify AAR structure
@@ -551,12 +551,28 @@ jobs:
             ln -sf "$OUTPUT_AAR" "onnxruntime_extensions-android.aar"
             echo ""
             echo "Created symlink: onnxruntime_extensions-android.aar -> $OUTPUT_AAR"
+            
+            # Verify files exist
+            echo ""
+            echo "=== File verification ==="
+            echo "AAR file exists: $(test -f "$OUTPUT_AAR" && echo "YES" || echo "NO")"
+            echo "Symlink exists: $(test -L "onnxruntime_extensions-android.aar" && echo "YES" || echo "NO")"
+            
+            # List the AAR file
+            echo ""
+            echo "=== Generated AAR file ==="
+            ls -la "$OUTPUT_AAR"
+            ls -la "onnxruntime_extensions-android.aar"
           else
             echo "ERROR: AAR file was not created!"
-            echo "Current directory: $(pwd)"
+            echo "Checking for file in various locations..."
+            find . -name "*.aar" -type f 2>/dev/null || echo "No .aar files found"
+            echo "Current directory contents:"
             ls -la
             echo "Build directory:"
             ls -la build/ 2>/dev/null || echo "No build directory"
+            echo "Build/outputs directory:"
+            ls -la build/outputs/ 2>/dev/null || echo "No outputs directory"
             exit 1
           fi
 
